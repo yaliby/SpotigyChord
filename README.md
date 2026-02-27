@@ -3,12 +3,13 @@
 ## מה זה עושה?
 - מתחבר לחשבון Spotify שלך (Authorization Code + PKCE)
 - מציג את השיר שמתנגן עכשיו (שם/אמן/עטיפה)
-- כפתור שטוען את אתר האקורדים הראשון בתוך האפליקציה (iframe פנימי), דרך מנגנון scraping/proxy בצד השרת.
+- כפתור שטוען תוצאת אקורדים בתוך האפליקציה (iframe פנימי).
+- ב־GitHub Pages: מצב דפדפן בלבד (Bing RSS + mirror).
+- אופציונלי: Backend API לשיפור יציבות.
 
 ## איך מריצים מקומית
 1) התקנת תלויות:
    - `npm install`
-   - `npm run playwright:install`
 2) הרצת שרת:
    - `npm run dev`
 3) פתח בדפדפן:
@@ -16,13 +17,14 @@
 4) בתוך האתר:
    - תעתיק את ה־Redirect URI שמופיע ותדביק אותו ב־Spotify Developer App Settings.
    - תדביק Client ID (חד‑פעמי) ותשמור.
-   - אם ה־frontend רץ ב־GitHub Pages: הדבק בשדה Backend API את כתובת השרת שלך (Render/Railway/VPS).
+   - ב־GitHub Pages אפשר להשאיר Backend ריק (מצב דפדפן בלבד).
+   - לשיפור יציבות, אפשר להדביק כתובת Backend API חיצונית.
    - תלחץ "התחבר ל‑Spotify".
 
-## הרצה בקונטיינר (Playwright בתוך Docker)
+## הרצה בקונטיינר (Backend אופציונלי)
 1) `docker compose up --build`
 2) פתח: `http://localhost:8080`
-3) אם ה־frontend נשאר ב־GitHub Pages, הדבק בשדה Backend API את כתובת הקונטיינר/שרת שלך.
+3) אם ה־frontend רץ ב־GitHub Pages, אפשר להדביק בשדה Backend API את כתובת השרת לקבלת יציבות מקסימלית.
 
 ## הערות
 - אם אין שיר שמתנגן כרגע/אין device פעיל — תראה "אין שיר כרגע".

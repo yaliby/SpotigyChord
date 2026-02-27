@@ -33,14 +33,14 @@
         <button class="btn" id="saveClientIdBtn">שמור</button>
       </div>
 
-      <label class="label">כתובת Backend API (אופציונלי, נדרש ב‑GitHub Pages):</label>
+      <label class="label">כתובת Backend API (אופציונלי):</label>
       <div class="row">
         <input id="apiBaseInput" class="input" placeholder="https://your-backend.example.com" autocomplete="off" spellcheck="false" />
         <button class="btn secondary" id="saveApiBaseBtn">שמור Backend</button>
       </div>
 
       <div class="hint">
-        אם אתה מריץ מקומית עם `npm run dev` אפשר להשאיר ריק. ב‑GitHub Pages צריך Backend חיצוני ולהדביק כאן את ה‑URL שלו.
+        ב‑GitHub Pages אפשר לעבוד גם בלי Backend. אם תגדיר Backend חיצוני, התוצאה תהיה יציבה ומהירה יותר.
       </div>
     </section>
 
@@ -95,9 +95,9 @@
     <section class="card">
       <h2>פריסה</h2>
       <ul class="bullets">
-        <li>נדרש שרת Node.js (הפרויקט משתמש ב‑backend עבור scraping/proxy).</li>
-        <li>להרצה מקומית: `npm install` ואז `npm run dev`.</li>
-        <li>אפשר לפרוס לכל שרת שתומך ב‑Node (לא ל־GitHub Pages בלבד).</li>
+        <li>GitHub Pages עובד גם בלי Backend (מצב דפדפן בלבד).</li>
+        <li>ליציבות גבוהה יותר אפשר להגדיר Backend API חיצוני.</li>
+        <li>להרצה מלאה מקומית עם Backend: `npm install` ואז `npm run dev`.</li>
       </ul>
     </section>
   </main>

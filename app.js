@@ -139,8 +139,67 @@ function embeddedChordsUrl(query) {
   return apiUrl(`api/chords/embedded?query=${encodeURIComponent(query)}&t=${Date.now()}`);
 }
 
+const RSS2JSON_ENDPOINT = "https://api.rss2json.com/v1/api.json";
+const BLOCKED_RESULT_HOSTS = [
+  "youtube.com",
+  "youtu.be",
+  "facebook.com",
+  "instagram.com",
+  "tiktok.com",
+  "ultimate-guitar.com",
+];
+
 let frameFallbackTimer = null;
 let backendHealthCache = { ok: null, checkedAt: 0 };
+
+function safeHost(url) {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function shouldSkipResult(url) {
+  const host = safeHost(url);
+  if (!host) return true;
+  return BLOCKED_RESULT_HOSTS.some(h => host.includes(h));
+}
+
+function jinaMirrorUrl(url) {
+  return `https://r.jina.ai/http://${String(url).replace(/^https?:\/\//, "")}`;
+}
+
+async function fetchJsonWithTimeout(url, timeoutMs = 12000) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { cache: "no-store", signal: ctl.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function resolveFirstResultWithoutBackend(query) {
+  const bingRssUrl = `https://www.bing.com/search?format=rss&q=${encodeURIComponent(query)}`;
+  const endpoint = `${RSS2JSON_ENDPOINT}?rss_url=${encodeURIComponent(bingRssUrl)}`;
+  const payload = await fetchJsonWithTimeout(endpoint, 12000);
+
+  if (!payload || payload.status !== "ok") {
+    throw new Error(payload?.message || "Bing RSS failed");
+  }
+
+  const links = (payload.items || [])
+    .map(item => String(item?.link || "").trim())
+    .filter(Boolean);
+
+  if (!links.length) throw new Error("No results from search feed");
+
+  const preferred = links.find(link => !shouldSkipResult(link));
+  return preferred || links[0];
+}
 
 function frameErrorHtml(title, details) {
   const safeTitle = String(title || "שגיאה").replace(/</g, "&lt;");
@@ -151,7 +210,7 @@ function frameErrorHtml(title, details) {
 <body style="margin:0;padding:18px;background:#111;color:#eee;font-family:system-ui,sans-serif;line-height:1.45">
   <h2 style="margin:0 0 10px">${safeTitle}</h2>
   <p style="margin:0 0 8px">${safeDetails}</p>
-  <p style="margin:0">פתרון מהיר: הרצה מקומית עם <code>npm run dev</code> או הדבקת URL של Backend בשדה ההגדרה למעלה.</p>
+  <p style="margin:0">פתרון מהיר: נסה שוב, או הגדר URL של Backend בשדה ההגדרה למעלה.</p>
 </body>
 </html>`;
 }
@@ -162,7 +221,7 @@ function showChordsInlineError(title, details) {
   els.chordsFrame.removeAttribute("src");
   els.chordsFrame.srcdoc = frameErrorHtml(title, details);
   if (els.chordsHint) {
-    els.chordsHint.textContent = "ה‑Backend לא זמין כרגע. עדכנתי הסבר בתוך התצוגה.";
+    els.chordsHint.textContent = "לא הצלחתי לטעון תוצאה כרגע. עדכנתי הסבר בתוך התצוגה.";
   }
 }
 
@@ -207,22 +266,38 @@ async function openChordsViewer(query) {
   if (!query) return;
   if (!els.chordsCard || !els.chordsFrame) return;
 
-  const backendOk = await ensureBackendAvailable();
-  if (!backendOk) {
-    showChordsInlineError("ה‑Backend לא זמין", `לא ניתן להגיע ל־${apiUrl("api/health")}`);
-    return;
-  }
-
   els.chordsCard.classList.add("open");
   els.chordsFrame.removeAttribute("srcdoc");
-  els.chordsFrame.src = embeddedChordsUrl(query);
+  els.chordsFrame.removeAttribute("src");
 
-  if (els.chordsHint) els.chordsHint.textContent = "טוען אתר אקורדים ראשון דרך מנוע סקרייפינג…";
+  if (els.chordsHint) els.chordsHint.textContent = "מחפש תוצאה ראשונה…";
+
+  const configuredBackend = getApiBase();
+  if (configuredBackend) {
+    const backendOk = await ensureBackendAvailable();
+    if (backendOk) {
+      els.chordsFrame.src = embeddedChordsUrl(query);
+      if (els.chordsHint) els.chordsHint.textContent = "טוען אתר אקורדים דרך Backend…";
+    } else if (els.chordsHint) {
+      els.chordsHint.textContent = "Backend לא זמין כרגע, עובר למצב דפדפן בלבד…";
+    }
+  }
+
+  if (!configuredBackend || !els.chordsFrame.src) {
+    try {
+      const firstUrl = await resolveFirstResultWithoutBackend(query);
+      els.chordsFrame.src = jinaMirrorUrl(firstUrl);
+      if (els.chordsHint) els.chordsHint.textContent = `נטען מראה פנימית של: ${safeHost(firstUrl)}`;
+    } catch (error) {
+      showChordsInlineError("לא הצלחתי לפתוח תוצאת אקורדים", error?.message || String(error));
+      return;
+    }
+  }
 
   clearTimeout(frameFallbackTimer);
   frameFallbackTimer = setTimeout(() => {
     if (els.chordsHint) {
-      els.chordsHint.textContent = "אם הטעינה איטית זה תקין, מתבצע חיפוש וסקרייפינג בצד השרת.";
+      els.chordsHint.textContent = "אם הטעינה איטית זה תקין. אפשר גם להגדיר Backend לשיפור יציבות.";
     }
   }, 3500);
 }
