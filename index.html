@@ -9,7 +9,7 @@
 <body>
   <header class="header">
     <h1>מה מתנגן בספוטיפיי + אקורדים</h1>
-    <div class="sub">אתר סטטי מוכן: מתחבר ל‑Spotify, מציג את השיר שמתנגן, ופותח חיפוש אקורדים בגוגל.</div>
+    <div class="sub">מתחבר ל‑Spotify, מציג את השיר שמתנגן, וטוען תוצאת אקורדים בתוך האפליקציה באמצעות scraping.</div>
   </header>
 
   <main class="wrap">
@@ -74,10 +74,9 @@
         <h2>תצוגת אקורדים</h2>
         <div class="actions">
           <button class="btn secondary" id="closeChordsBtn" type="button">סגור תצוגה</button>
-          <a class="btn secondary" id="openChordsNewTab" href="#" target="_blank" rel="noreferrer">פתח בלשונית</a>
         </div>
       </div>
-      <div class="tiny muted" id="chordsHint">לחץ על "פתח אקורדים כאן" כדי לטעון את האתר הראשון של Google ישירות בתוך הדף.</div>
+      <div class="tiny muted" id="chordsHint">לחץ על "פתח אקורדים כאן" כדי לטעון את האתר הראשון בתוך האפליקציה.</div>
       <iframe
         id="chordsFrame"
         class="chords-frame"
@@ -90,9 +89,9 @@
     <section class="card">
       <h2>פריסה</h2>
       <ul class="bullets">
-        <li>GitHub Pages: העלה את כל הקבצים לריפו, הפעל Pages על Branch/Root.</li>
-        <li>או כל Hosting סטטי אחר (Netlify/Vercel/כל שרת סטטי).</li>
-        <li>אין צורך ב‑Backend.</li>
+        <li>נדרש שרת Node.js (הפרויקט משתמש ב‑backend עבור scraping/proxy).</li>
+        <li>להרצה מקומית: `npm install` ואז `npm run dev`.</li>
+        <li>אפשר לפרוס לכל שרת שתומך ב‑Node (לא ל־GitHub Pages בלבד).</li>
       </ul>
     </section>
   </main>

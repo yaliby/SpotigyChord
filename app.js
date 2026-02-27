@@ -30,7 +30,6 @@ const els = {
   chordsCard: document.getElementById("chordsCard"),
   chordsFrame: document.getElementById("chordsFrame"),
   chordsHint: document.getElementById("chordsHint"),
-  openChordsNewTab: document.getElementById("openChordsNewTab"),
   closeChordsBtn: document.getElementById("closeChordsBtn"),
   debugLine: document.getElementById("debugLine"),
 };
@@ -107,13 +106,8 @@ function setDebug(text) {
   els.debugLine.textContent = text || "";
 }
 
-function googleSearchUrl(query) {
-  return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
-}
-
-function googleFirstResultUrl(query) {
-  // btnI = "I'm Feeling Lucky" (redirect to first result)
-  return `https://www.google.com/search?btnI=1&q=${encodeURIComponent(query)}`;
+function embeddedChordsUrl(query) {
+  return `/api/chords/embedded?query=${encodeURIComponent(query)}&t=${Date.now()}`;
 }
 
 let frameFallbackTimer = null;
@@ -123,29 +117,24 @@ function closeChordsViewer() {
   els.chordsCard.classList.remove("open");
   els.chordsFrame.removeAttribute("src");
   if (els.chordsHint) {
-    els.chordsHint.textContent = 'לחץ על "פתח אקורדים כאן" כדי לטעון את האתר הראשון של Google ישירות בתוך הדף.';
+    els.chordsHint.textContent = 'לחץ על "פתח אקורדים כאן" כדי לטעון את האתר הראשון בתוך האפליקציה.';
   }
   clearTimeout(frameFallbackTimer);
 }
 
-function openChordsViewer(url) {
-  if (!url || url === "#") return;
-
-  if (!els.chordsCard || !els.chordsFrame) {
-    window.open(url, "_blank", "noopener,noreferrer");
-    return;
-  }
+function openChordsViewer(query) {
+  if (!query) return;
+  if (!els.chordsCard || !els.chordsFrame) return;
 
   els.chordsCard.classList.add("open");
-  els.chordsFrame.src = url;
+  els.chordsFrame.src = embeddedChordsUrl(query);
 
-  if (els.openChordsNewTab) els.openChordsNewTab.href = url;
-  if (els.chordsHint) els.chordsHint.textContent = "טוען את האתר הראשון…";
+  if (els.chordsHint) els.chordsHint.textContent = "טוען אתר אקורדים ראשון דרך מנוע סקרייפינג…";
 
   clearTimeout(frameFallbackTimer);
   frameFallbackTimer = setTimeout(() => {
     if (els.chordsHint) {
-      els.chordsHint.textContent = "אם האתר לא נטען כאן, לחץ על \"פתח בלשונית\". חלק מהאתרים חוסמים הצגה בתוך iframe.";
+      els.chordsHint.textContent = "אם הטעינה איטית זה תקין, מתבצע חיפוש וסקרייפינג בצד השרת.";
     }
   }, 3500);
 }
@@ -267,7 +256,6 @@ function updateTrackUI(data) {
     els.cover.removeAttribute("src");
     els.chordsGoogle.href = "#";
     els.chordsGoogle.dataset.query = "";
-    if (els.openChordsNewTab) els.openChordsNewTab.href = "#";
     els.spotifyOpen.href = "#";
     setStatus("אין שיר כרגע");
     closeChordsViewer();
@@ -288,7 +276,7 @@ function updateTrackUI(data) {
   setStatus(playing ? "מתנגן עכשיו ✅" : "מושהה ⏸");
 
   const query = `${artists} ${title} chords`;
-  els.chordsGoogle.href = googleFirstResultUrl(query);
+  els.chordsGoogle.href = "#";
   els.chordsGoogle.dataset.query = query;
   els.spotifyOpen.href = spotifyUrl || "#";
 }
@@ -371,20 +359,15 @@ els.logoutBtn?.addEventListener("click", () => {
 els.chordsGoogle?.addEventListener("click", (event) => {
   event.preventDefault();
 
-  const href = els.chordsGoogle.href || "#";
-  if (!href || href === "#") return;
+  const query = els.chordsGoogle.dataset.query || "";
+  if (!query) return;
 
-  openChordsViewer(href);
+  openChordsViewer(query);
 });
 
 els.chordsFrame?.addEventListener("load", () => {
   if (els.chordsHint) {
-    const query = els.chordsGoogle?.dataset?.query || "";
-    const fallback = query ? googleSearchUrl(query) : "#";
-    els.chordsHint.textContent = "הטעינה הושלמה. אם זו לא התוצאה שרצית, השתמש ב\"פתח בלשונית\" או חזור לחיפוש Google.";
-    if (els.openChordsNewTab && els.openChordsNewTab.href === "#") {
-      els.openChordsNewTab.href = fallback;
-    }
+    els.chordsHint.textContent = "האתר נטען בתוך האפליקציה.";
   }
 });
 

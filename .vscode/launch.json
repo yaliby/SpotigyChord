@@ -8,10 +8,10 @@
             "name": "Run site (auto server)",
             "type": "node-terminal",
             "request": "launch",
-            "command": "python3 -m http.server 8080",
+            "command": "npm run dev",
             "cwd": "${workspaceFolder}",
             "serverReadyAction": {
-                "pattern": "Serving HTTP on .* port (\\d+)",
+                "pattern": "Server ready on http://localhost:(\\d+)",
                 "uriFormat": "http://localhost:%s/index.html",
                 "action": "openExternally"
             }
