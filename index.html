@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Spotify → Chords (אתר מוכן)</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="header">
+    <h1>מה מתנגן בספוטיפיי + אקורדים</h1>
+    <div class="sub">אתר סטטי מוכן: מתחבר ל‑Spotify, מציג את השיר שמתנגן, ופותח חיפוש אקורדים בגוגל.</div>
+  </header>
+
+  <main class="wrap">
+    <section class="card" id="setupCard">
+      <h2>הגדרה חד‑פעמית (בלי לגעת בקוד)</h2>
+      <ol class="steps">
+        <li>צור Spotify Developer App (Dashboard של Spotify Developers).</li>
+        <li>הוסף Redirect URI הבא להגדרות האפליקציה שלך:</li>
+      </ol>
+
+      <div class="row">
+        <code id="redirectUri" class="copybox"></code>
+        <button class="btn secondary" id="copyRedirectBtn">העתק</button>
+      </div>
+
+      <div class="spacer"></div>
+
+      <label class="label">הדבק כאן את ה‑Client ID של האפליקציה שלך (חד‑פעמי):</label>
+      <div class="row">
+        <input id="clientIdInput" class="input" placeholder="Spotify Client ID" autocomplete="off" spellcheck="false" />
+        <button class="btn" id="saveClientIdBtn">שמור</button>
+      </div>
+
+      <div class="hint">
+        אחרי ששמרת Client ID והוספת Redirect URI בדשבורד של Spotify — לחץ “התחבר”.
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="topbar">
+        <div class="pill" id="authStatePill">לא מחובר</div>
+        <div class="actions">
+          <button class="btn" id="loginBtn">התחבר ל‑Spotify</button>
+          <button class="btn secondary" id="logoutBtn">התנתק</button>
+        </div>
+      </div>
+
+      <div class="nowplaying">
+        <img id="cover" class="cover" alt="" />
+        <div class="meta">
+          <div class="muted">כרגע מתנגן:</div>
+          <div id="title" class="title">—</div>
+          <div id="artist" class="artist muted">—</div>
+          <div id="status" class="status muted">—</div>
+
+          <div class="links">
+            <a id="chordsGoogle" class="btn" href="#" rel="noreferrer">פתח אקורדים כאן</a>
+            <a id="spotifyOpen" class="btn secondary" href="#" target="_blank" rel="noreferrer">פתח ב‑Spotify</a>
+          </div>
+
+          <div class="tiny muted" id="debugLine"></div>
+        </div>
+      </div>
+
+      <div class="footnote muted">
+        אם אתה רואה “אין שיר כרגע” — תוודא שספוטיפיי באמת מנגן במכשיר כלשהו (מחשב/טלפון) עם אותו חשבון.
+      </div>
+    </section>
+
+    <section class="card chords-card" id="chordsCard">
+      <div class="topbar">
+        <h2>תצוגת אקורדים</h2>
+        <div class="actions">
+          <button class="btn secondary" id="closeChordsBtn" type="button">סגור תצוגה</button>
+          <a class="btn secondary" id="openChordsNewTab" href="#" target="_blank" rel="noreferrer">פתח בלשונית</a>
+        </div>
+      </div>
+      <div class="tiny muted" id="chordsHint">לחץ על "פתח אקורדים כאן" כדי לטעון את האתר הראשון של Google ישירות בתוך הדף.</div>
+      <iframe
+        id="chordsFrame"
+        class="chords-frame"
+        title="Chords Viewer"
+        loading="lazy"
+        referrerpolicy="no-referrer-when-downgrade"
+      ></iframe>
+    </section>
+
+    <section class="card">
+      <h2>פריסה</h2>
+      <ul class="bullets">
+        <li>GitHub Pages: העלה את כל הקבצים לריפו, הפעל Pages על Branch/Root.</li>
+        <li>או כל Hosting סטטי אחר (Netlify/Vercel/כל שרת סטטי).</li>
+        <li>אין צורך ב‑Backend.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
