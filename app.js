@@ -4,6 +4,7 @@
 
 const LS = {
   clientId: "spch_client_id",
+  apiBase: "spch_api_base",
   accessToken: "spch_access_token",
   refreshToken: "spch_refresh_token",
   expiresAt: "spch_expires_at",
@@ -18,6 +19,8 @@ const els = {
   copyRedirectBtn: document.getElementById("copyRedirectBtn"),
   clientIdInput: document.getElementById("clientIdInput"),
   saveClientIdBtn: document.getElementById("saveClientIdBtn"),
+  apiBaseInput: document.getElementById("apiBaseInput"),
+  saveApiBaseBtn: document.getElementById("saveApiBaseBtn"),
   loginBtn: document.getElementById("loginBtn"),
   logoutBtn: document.getElementById("logoutBtn"),
   authStatePill: document.getElementById("authStatePill"),
@@ -59,6 +62,19 @@ function getClientId() {
 
 function setClientId(id) {
   localStorage.setItem(LS.clientId, id.trim());
+}
+
+function getApiBase() {
+  return (localStorage.getItem(LS.apiBase) || "").trim();
+}
+
+function setApiBase(url) {
+  const clean = (url || "").trim().replace(/\/+$/, "");
+  if (!clean) {
+    localStorage.removeItem(LS.apiBase);
+    return;
+  }
+  localStorage.setItem(LS.apiBase, clean);
 }
 
 function setTokens({ access_token, refresh_token, expires_in }) {
@@ -106,27 +122,102 @@ function setDebug(text) {
   els.debugLine.textContent = text || "";
 }
 
+function joinUrl(base, path) {
+  const cleanBase = String(base || "").replace(/\/+$/, "");
+  const cleanPath = String(path || "").startsWith("/") ? path : `/${path}`;
+  return `${cleanBase}${cleanPath}`;
+}
+
+function apiBaseUrl() {
+  const configured = getApiBase();
+  if (configured) return configured;
+  return baseDirUrl().replace(/\/+$/, "");
+}
+
+function apiUrl(path) {
+  return joinUrl(apiBaseUrl(), path);
+}
+
 function embeddedChordsUrl(query) {
-  return `/api/chords/embedded?query=${encodeURIComponent(query)}&t=${Date.now()}`;
+  return apiUrl(`/api/chords/embedded?query=${encodeURIComponent(query)}&t=${Date.now()}`);
 }
 
 let frameFallbackTimer = null;
+let backendHealthCache = { ok: null, checkedAt: 0 };
+
+function frameErrorHtml(title, details) {
+  const safeTitle = String(title || "שגיאה").replace(/</g, "&lt;");
+  const safeDetails = String(details || "").replace(/</g, "&lt;");
+  return `<!doctype html>
+<html lang="he" dir="rtl">
+<head><meta charset="utf-8"><title>${safeTitle}</title></head>
+<body style="margin:0;padding:18px;background:#111;color:#eee;font-family:system-ui,sans-serif;line-height:1.45">
+  <h2 style="margin:0 0 10px">${safeTitle}</h2>
+  <p style="margin:0 0 8px">${safeDetails}</p>
+  <p style="margin:0">פתרון מהיר: הרצה מקומית עם <code>npm run dev</code> או הדבקת URL של Backend בשדה ההגדרה למעלה.</p>
+</body>
+</html>`;
+}
+
+function showChordsInlineError(title, details) {
+  if (!els.chordsCard || !els.chordsFrame) return;
+  els.chordsCard.classList.add("open");
+  els.chordsFrame.removeAttribute("src");
+  els.chordsFrame.srcdoc = frameErrorHtml(title, details);
+  if (els.chordsHint) {
+    els.chordsHint.textContent = "ה‑Backend לא זמין כרגע. עדכנתי הסבר בתוך התצוגה.";
+  }
+}
+
+async function ensureBackendAvailable() {
+  const now = Date.now();
+  if (backendHealthCache.ok !== null && now - backendHealthCache.checkedAt < 15000) {
+    return backendHealthCache.ok;
+  }
+
+  const healthUrl = apiUrl(`/api/health?t=${now}`);
+  let ok = false;
+  try {
+    const ctl = new AbortController();
+    const timeout = setTimeout(() => ctl.abort(), 6000);
+    const res = await fetch(healthUrl, {
+      method: "GET",
+      cache: "no-store",
+      signal: ctl.signal,
+    });
+    clearTimeout(timeout);
+    ok = res.ok;
+  } catch {
+    ok = false;
+  }
+
+  backendHealthCache = { ok, checkedAt: now };
+  return ok;
+}
 
 function closeChordsViewer() {
   if (!els.chordsCard || !els.chordsFrame) return;
   els.chordsCard.classList.remove("open");
   els.chordsFrame.removeAttribute("src");
+  els.chordsFrame.removeAttribute("srcdoc");
   if (els.chordsHint) {
     els.chordsHint.textContent = 'לחץ על "פתח אקורדים כאן" כדי לטעון את האתר הראשון בתוך האפליקציה.';
   }
   clearTimeout(frameFallbackTimer);
 }
 
-function openChordsViewer(query) {
+async function openChordsViewer(query) {
   if (!query) return;
   if (!els.chordsCard || !els.chordsFrame) return;
 
+  const backendOk = await ensureBackendAvailable();
+  if (!backendOk) {
+    showChordsInlineError("ה‑Backend לא זמין", `לא ניתן להגיע ל־${apiUrl("/api/health")}`);
+    return;
+  }
+
   els.chordsCard.classList.add("open");
+  els.chordsFrame.removeAttribute("srcdoc");
   els.chordsFrame.src = embeddedChordsUrl(query);
 
   if (els.chordsHint) els.chordsHint.textContent = "טוען אתר אקורדים ראשון דרך מנוע סקרייפינג…";
@@ -316,6 +407,9 @@ function syncSetupUI() {
   els.redirectUri.textContent = redirectUri();
   const cid = getClientId();
   els.clientIdInput.value = cid;
+  if (els.apiBaseInput) {
+    els.apiBaseInput.value = getApiBase();
+  }
 
   if (getAccessToken() && !tokenExpired()) {
     setPill("ok", "מחובר");
@@ -347,6 +441,23 @@ els.saveClientIdBtn?.addEventListener("click", () => {
   setTimeout(() => syncSetupUI(), 300);
 });
 
+els.saveApiBaseBtn?.addEventListener("click", () => {
+  const v = (els.apiBaseInput?.value || "").trim();
+  if (v) {
+    if (!/^https?:\/\//i.test(v)) {
+      alert("כתובת Backend חייבת להתחיל ב-http:// או https://");
+      return;
+    }
+    setApiBase(v);
+  } else {
+    setApiBase("");
+  }
+
+  backendHealthCache = { ok: null, checkedAt: 0 };
+  setPill("ok", "Backend נשמר");
+  setTimeout(() => syncSetupUI(), 300);
+});
+
 els.loginBtn?.addEventListener("click", startLogin);
 
 els.logoutBtn?.addEventListener("click", () => {
@@ -362,7 +473,7 @@ els.chordsGoogle?.addEventListener("click", (event) => {
   const query = els.chordsGoogle.dataset.query || "";
   if (!query) return;
 
-  openChordsViewer(query);
+  void openChordsViewer(query);
 });
 
 els.chordsFrame?.addEventListener("load", () => {

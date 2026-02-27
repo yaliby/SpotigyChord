@@ -12,6 +12,17 @@ const HTTP_HEADERS = {
   "Accept-Language": "en-US,en;q=0.9",
 };
 
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") {
+    res.sendStatus(204);
+    return;
+  }
+  next();
+});
+
 app.use(express.static(path.join(__dirname)));
 
 function isHttpUrl(url) {
@@ -422,6 +433,11 @@ app.get("/api/chords/resolve", async (req, res) => {
       error: error && error.message ? error.message : "Unknown error",
     });
   }
+});
+
+app.get("/api/health", (_, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ ok: true, ts: Date.now() });
 });
 
 app.get("*", (_, res) => {

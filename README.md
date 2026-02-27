@@ -15,6 +15,7 @@
 4) בתוך האתר:
    - תעתיק את ה־Redirect URI שמופיע ותדביק אותו ב־Spotify Developer App Settings.
    - תדביק Client ID (חד‑פעמי) ותשמור.
+   - אם ה־frontend רץ ב־GitHub Pages: הדבק בשדה Backend API את כתובת השרת שלך (Render/Railway/VPS).
    - תלחץ "התחבר ל‑Spotify".
 
 ## הערות

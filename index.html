@@ -33,8 +33,14 @@
         <button class="btn" id="saveClientIdBtn">שמור</button>
       </div>
 
+      <label class="label">כתובת Backend API (אופציונלי, נדרש ב‑GitHub Pages):</label>
+      <div class="row">
+        <input id="apiBaseInput" class="input" placeholder="https://your-backend.example.com" autocomplete="off" spellcheck="false" />
+        <button class="btn secondary" id="saveApiBaseBtn">שמור Backend</button>
+      </div>
+
       <div class="hint">
-        אחרי ששמרת Client ID והוספת Redirect URI בדשבורד של Spotify — לחץ “התחבר”.
+        אם אתה מריץ מקומית עם `npm run dev` אפשר להשאיר ריק. ב‑GitHub Pages צריך Backend חיצוני ולהדביק כאן את ה‑URL שלו.
       </div>
     </section>
 
