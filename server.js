@@ -1,16 +1,16 @@
 const path = require("path");
 const express = require("express");
-const axios = require("axios");
-const cheerio = require("cheerio");
+const { chromium } = require("playwright");
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-const HTTP_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-  "Accept-Language": "en-US,en;q=0.9",
-};
+const BROWSER_USER_AGENT =
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+const RESOLVE_CACHE_MS = 5 * 60 * 1000;
+
+const resolvedUrlCache = new Map();
+let browserPromise = null;
 
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -25,261 +25,6 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname)));
 
-function isHttpUrl(url) {
-  return typeof url === "string" && (url.startsWith("http://") || url.startsWith("https://"));
-}
-
-function isSearchEngineUrl(url) {
-  if (!isHttpUrl(url)) return false;
-  try {
-    const host = new URL(url).hostname.toLowerCase();
-    return (
-      host.endsWith("google.com") ||
-      host.endsWith("bing.com") ||
-      host.endsWith("duckduckgo.com")
-    );
-  } catch {
-    return false;
-  }
-}
-
-function isDisallowedResultUrl(url) {
-  if (!isHttpUrl(url)) return true;
-  try {
-    const host = new URL(url).hostname.toLowerCase();
-    return (
-      host.includes("youtube.com") ||
-      host.includes("youtu.be") ||
-      host.includes("facebook.com") ||
-      host.includes("instagram.com") ||
-      host.includes("tiktok.com") ||
-      host.includes("gstatic.com") ||
-      host.includes("googleusercontent.com")
-    );
-  } catch {
-    return true;
-  }
-}
-
-function decodeGoogleHref(href) {
-  if (!href) return "";
-  if (isHttpUrl(href)) return href;
-  if (!href.startsWith("/url?")) return "";
-
-  const url = new URL(`https://www.google.com${href}`);
-  return url.searchParams.get("q") || "";
-}
-
-function findGoogleFirstResult(html) {
-  const $ = cheerio.load(html);
-
-  const candidates = [];
-  $("#search a").each((_, el) => {
-    const href = $(el).attr("href") || "";
-    const hasHeading = $(el).find("h3").length > 0;
-    if (!hasHeading) return;
-    candidates.push(href);
-  });
-
-  for (const href of candidates) {
-    const normalized = decodeGoogleHref(href);
-    if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
-      return normalized;
-    }
-  }
-
-  return "";
-}
-
-function decodeBingHref(href) {
-  if (!href) return "";
-  if (isHttpUrl(href)) {
-    try {
-      const url = new URL(href);
-      if (url.hostname !== "www.bing.com" || !url.pathname.startsWith("/ck/")) {
-        return href;
-      }
-
-      const encoded = url.searchParams.get("u") || "";
-      if (!encoded) return "";
-
-      let payload = encoded;
-      if (payload.startsWith("a1")) payload = payload.slice(2);
-      payload = payload.replace(/-/g, "+").replace(/_/g, "/");
-      while (payload.length % 4 !== 0) payload += "=";
-
-      const decoded = Buffer.from(payload, "base64").toString("utf8");
-      if (decoded.startsWith("http://") || decoded.startsWith("https://")) return decoded;
-    } catch {
-      return "";
-    }
-  }
-  return "";
-}
-
-function decodeDuckDuckGoHref(href) {
-  if (!href) return "";
-  if (isHttpUrl(href)) {
-    try {
-      const parsed = new URL(href);
-      if (!parsed.hostname.includes("duckduckgo.com")) return href;
-      const uddg = parsed.searchParams.get("uddg") || "";
-      return decodeURIComponent(uddg);
-    } catch {
-      return href;
-    }
-  }
-  if (href.startsWith("/l/?")) {
-    const parsed = new URL(`https://duckduckgo.com${href}`);
-    const uddg = parsed.searchParams.get("uddg") || "";
-    return decodeURIComponent(uddg);
-  }
-  return "";
-}
-
-function extractResultLinksFromJinaMarkdown(markdown, limit = 8) {
-  const out = [];
-  const seen = new Set();
-  const lines = String(markdown || "").split("\n");
-
-  for (const line of lines) {
-    if (!line.startsWith("[### ")) continue;
-    const match = line.match(/\]\((https?:\/\/[^)]+)\)$/);
-    if (!match) continue;
-    const candidate = match[1];
-    if (isHttpUrl(candidate) && !isSearchEngineUrl(candidate) && !seen.has(candidate)) {
-      seen.add(candidate);
-      out.push(candidate);
-      if (out.length >= limit) return out;
-    }
-  }
-
-  const allLinks = String(markdown || "").match(/\[[^\]]+\]\((https?:\/\/[^)]+)\)/g) || [];
-  for (const token of allLinks) {
-    const match = token.match(/\((https?:\/\/[^)]+)\)/);
-    if (!match) continue;
-    const candidate = match[1];
-    if (isHttpUrl(candidate) && !isSearchEngineUrl(candidate) && !seen.has(candidate)) {
-      seen.add(candidate);
-      out.push(candidate);
-      if (out.length >= limit) return out;
-    }
-  }
-
-  return out;
-}
-
-function findBingFirstResult(html) {
-  const $ = cheerio.load(html);
-  const anchors = $("li.b_algo h2 a[href]");
-
-  for (const el of anchors.toArray()) {
-    const href = $(el).attr("href") || "";
-    const resolved = decodeBingHref(href);
-    if (resolved) return resolved;
-  }
-
-  return "";
-}
-
-function findDuckDuckGoFirstResult(html) {
-  const $ = cheerio.load(html);
-  const href = $(".result__a").first().attr("href") || $("a[data-testid='result-title-a']").first().attr("href") || "";
-  const decoded = decodeDuckDuckGoHref(href);
-  if (decoded.startsWith("http://") || decoded.startsWith("https://")) return decoded;
-  return "";
-}
-
-function pushUnique(candidates, candidate) {
-  if (!isHttpUrl(candidate)) return;
-  if (isSearchEngineUrl(candidate)) return;
-  if (isDisallowedResultUrl(candidate)) return;
-  if (!candidates.includes(candidate)) candidates.push(candidate);
-}
-
-async function resolveCandidateUrls(rawQuery) {
-  const query = rawQuery.trim();
-  if (!query) throw new Error("Missing query");
-  const candidates = [];
-
-  const googleUrl = `https://www.google.com/search?hl=en&gl=us&num=10&q=${encodeURIComponent(query)}`;
-  try {
-    const res = await axios.get(googleUrl, {
-      timeout: 12000,
-      headers: HTTP_HEADERS,
-      validateStatus: () => true,
-    });
-    if (res.status >= 200 && res.status < 300) {
-      const fromGoogle = findGoogleFirstResult(res.data || "");
-      pushUnique(candidates, fromGoogle);
-    }
-  } catch {
-    // Continue to fallback search providers.
-  }
-
-  const jinaGoogleUrl = `https://r.jina.ai/http://www.google.com/search?q=${encodeURIComponent(query)}`;
-  try {
-    const jinaRes = await axios.get(jinaGoogleUrl, {
-      timeout: 18000,
-      headers: HTTP_HEADERS,
-      validateStatus: () => true,
-    });
-    if (jinaRes.status >= 200 && jinaRes.status < 300) {
-      const fromJina = extractResultLinksFromJinaMarkdown(jinaRes.data || "");
-      fromJina.forEach((url) => pushUnique(candidates, url));
-    }
-  } catch {
-    // Continue to fallback.
-  }
-
-  const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
-  try {
-    const bingRes = await axios.get(bingUrl, {
-      timeout: 12000,
-      headers: HTTP_HEADERS,
-      validateStatus: () => true,
-    });
-    if (bingRes.status >= 200 && bingRes.status < 300) {
-      const fromBing = findBingFirstResult(bingRes.data || "");
-      pushUnique(candidates, fromBing);
-    }
-  } catch {
-    // Continue to fallback.
-  }
-
-  const ddgUrl = `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-  try {
-    const ddgRes = await axios.get(ddgUrl, {
-      timeout: 12000,
-      headers: HTTP_HEADERS,
-      validateStatus: () => true,
-    });
-    if (ddgRes.status >= 200 && ddgRes.status < 300) {
-      const fromDdg = findDuckDuckGoFirstResult(ddgRes.data || "");
-      pushUnique(candidates, fromDdg);
-    }
-  } catch {
-    // Ignore.
-  }
-
-  if (!candidates.length) throw new Error("Could not resolve first search result");
-  return candidates;
-}
-
-async function resolveFirstResultUrl(rawQuery) {
-  const candidates = await resolveCandidateUrls(rawQuery);
-  return candidates[0];
-}
-
-function removeScriptsAndMeta(html) {
-  let out = html || "";
-  out = out.replace(/<script[\s\S]*?<\/script>/gi, "");
-  out = out.replace(/<meta[^>]+http-equiv=["']Content-Security-Policy["'][^>]*>/gi, "");
-  out = out.replace(/<meta[^>]+http-equiv=["']X-Frame-Options["'][^>]*>/gi, "");
-  out = out.replace(/<base[^>]*>/gi, "");
-  return out;
-}
-
 function safeHtml(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -288,8 +33,17 @@ function safeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
+function stripActiveContent(html) {
+  let out = String(html || "");
+  out = out.replace(/<script[\s\S]*?<\/script>/gi, "");
+  out = out.replace(/<meta[^>]+http-equiv=["']Content-Security-Policy["'][^>]*>/gi, "");
+  out = out.replace(/<meta[^>]+http-equiv=["']X-Frame-Options["'][^>]*>/gi, "");
+  out = out.replace(/<base[^>]*>/gi, "");
+  return out;
+}
+
 function injectBaseAndBanner(html, sourceUrl) {
-  const clean = removeScriptsAndMeta(html);
+  const clean = stripActiveContent(html);
   const baseTag = `<base href="${safeHtml(sourceUrl)}">`;
   const banner = `
     <div style="position:sticky;top:0;z-index:2147483647;background:#111;color:#eee;padding:10px 12px;font:13px/1.35 system-ui,sans-serif;border-bottom:1px solid #333">
@@ -299,9 +53,9 @@ function injectBaseAndBanner(html, sourceUrl) {
   `;
 
   if (/<head[^>]*>/i.test(clean)) {
-    let out = clean.replace(/<head[^>]*>/i, (m) => `${m}${baseTag}`);
+    let out = clean.replace(/<head[^>]*>/i, (match) => `${match}${baseTag}`);
     if (/<body[^>]*>/i.test(out)) {
-      out = out.replace(/<body[^>]*>/i, (m) => `${m}${banner}`);
+      out = out.replace(/<body[^>]*>/i, (match) => `${match}${banner}`);
     }
     return out;
   }
@@ -309,99 +63,260 @@ function injectBaseAndBanner(html, sourceUrl) {
   return `<!doctype html><html><head>${baseTag}</head><body>${banner}${clean}</body></html>`;
 }
 
-async function fetchPageHtml(url) {
-  const res = await axios.get(url, {
-    timeout: 15000,
-    maxRedirects: 5,
-    headers: HTTP_HEADERS,
-    responseType: "text",
-    validateStatus: () => true,
-  });
-
-  const type = String(res.headers["content-type"] || "").toLowerCase();
-  if (!(res.status >= 200 && res.status < 400)) {
-    throw new Error(`Target site returned ${res.status}`);
+function isAllowedResultUrl(url) {
+  try {
+    const u = new URL(url);
+    if (!/^https?:$/.test(u.protocol)) return false;
+    const host = u.hostname.toLowerCase();
+    if (
+      host.includes("google.") ||
+      host.includes("bing.") ||
+      host.includes("duckduckgo.") ||
+      host.includes("youtube.") ||
+      host.includes("youtu.be") ||
+      host.includes("facebook.") ||
+      host.includes("instagram.") ||
+      host.includes("tiktok.")
+    ) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
   }
-  if (!type.includes("text/html") && !type.includes("application/xhtml+xml")) {
-    throw new Error(`Unsupported target content type: ${type || "unknown"}`);
-  }
-
-  return String(res.data || "");
 }
 
-async function fetchViaJinaAsHtml(url) {
-  const mirrorUrl = `https://r.jina.ai/http://${String(url).replace(/^https?:\/\//, "")}`;
-  const res = await axios.get(mirrorUrl, {
-    timeout: 20000,
-    headers: HTTP_HEADERS,
-    validateStatus: () => true,
+function decodeBingTrackingUrl(href) {
+  if (!href) return "";
+  try {
+    const parsed = new URL(href);
+    if (!parsed.hostname.includes("bing.com") || !parsed.pathname.startsWith("/ck/")) {
+      return href;
+    }
+    let payload = parsed.searchParams.get("u") || "";
+    if (!payload) return "";
+    if (payload.startsWith("a1")) payload = payload.slice(2);
+    payload = payload.replace(/-/g, "+").replace(/_/g, "/");
+    while (payload.length % 4 !== 0) payload += "=";
+    const decoded = Buffer.from(payload, "base64").toString("utf8");
+    return decoded || "";
+  } catch {
+    return "";
+  }
+}
+
+function decodeGoogleResultUrl(href) {
+  if (!href) return "";
+  if (/^https?:\/\//i.test(href)) return href;
+  if (!href.startsWith("/url?")) return "";
+  try {
+    const parsed = new URL(`https://www.google.com${href}`);
+    return parsed.searchParams.get("q") || "";
+  } catch {
+    return "";
+  }
+}
+
+async function getBrowser() {
+  if (!browserPromise) {
+    browserPromise = chromium.launch({
+      headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+      ],
+    });
+  }
+  return browserPromise;
+}
+
+async function withContext(fn) {
+  const browser = await getBrowser();
+  const context = await browser.newContext({
+    locale: "en-US",
+    userAgent: BROWSER_USER_AGENT,
+    viewport: { width: 1366, height: 900 },
+  });
+  try {
+    return await fn(context);
+  } finally {
+    await context.close();
+  }
+}
+
+async function maybeHandleGoogleConsent(page) {
+  const selectors = [
+    "button:has-text('I agree')",
+    "button:has-text('Accept all')",
+    "button:has-text('Reject all')",
+  ];
+
+  for (const selector of selectors) {
+    const btn = page.locator(selector).first();
+    if (await btn.isVisible().catch(() => false)) {
+      await btn.click({ timeout: 1000 }).catch(() => {});
+      return;
+    }
+  }
+}
+
+async function resolveFromGoogle(page, query) {
+  const googleUrl = `https://www.google.com/search?hl=en&gl=us&num=10&q=${encodeURIComponent(query)}`;
+  await page.goto(googleUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+  await maybeHandleGoogleConsent(page);
+  await page.waitForTimeout(700);
+  const links = page.locator("a:has(h3)");
+  const count = Math.min(await links.count().catch(() => 0), 10);
+  for (let i = 0; i < count; i++) {
+    const raw = await links.nth(i).getAttribute("href").catch(() => "");
+    const decoded = decodeGoogleResultUrl(raw || "");
+    if (decoded) return decoded;
+  }
+  return "";
+}
+
+async function resolveFromDuckDuckGo(page, query) {
+  const url = `https://duckduckgo.com/?q=${encodeURIComponent(query)}&ia=web`;
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+  await page.waitForTimeout(800);
+
+  const href = await page.evaluate(() => {
+    const selectors = [
+      "article h2 a",
+      "a[data-testid='result-title-a']",
+      ".result__a",
+    ];
+    for (const selector of selectors) {
+      const a = document.querySelector(selector);
+      if (!a) continue;
+      let href = a.getAttribute("href") || "";
+      if (!href) continue;
+      if (href.startsWith("/l/?")) {
+        try {
+          const u = new URL(`https://duckduckgo.com${href}`);
+          href = decodeURIComponent(u.searchParams.get("uddg") || "");
+        } catch {
+          href = "";
+        }
+      }
+      if (/^https?:\/\//i.test(href)) return href;
+    }
+    return "";
   });
 
-  if (!(res.status >= 200 && res.status < 300)) {
-    throw new Error(`Jina mirror failed with ${res.status}`);
+  return href;
+}
+
+async function resolveFromBing(page, query) {
+  const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
+  await page.goto(bingUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+  await page.waitForLoadState("domcontentloaded");
+  await page.waitForTimeout(700);
+  const links = page.locator("li.b_algo h2 a");
+  await links.first().waitFor({ state: "attached", timeout: 10000 }).catch(() => {});
+  const count = Math.min(await links.count().catch(() => 0), 10);
+  for (let i = 0; i < count; i++) {
+    const raw = await links.nth(i).getAttribute("href").catch(() => "");
+    const decoded = decodeBingTrackingUrl(raw || "");
+    if (decoded) return decoded;
+  }
+  return "";
+}
+
+async function resolveFirstResultUrl(query) {
+  const cacheKey = query.trim().toLowerCase();
+  const cached = resolvedUrlCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < RESOLVE_CACHE_MS) {
+    return cached.url;
   }
 
-  const md = String(res.data || "");
-  const escaped = safeHtml(md).replace(/\n/g, "<br>");
-  return `
-    <!doctype html>
-    <html lang="he" dir="rtl">
-    <head>
-      <meta charset="utf-8">
-      <title>Chords Snapshot</title>
-      <style>
-        body{font-family:system-ui,sans-serif;background:#111;color:#eee;margin:0;padding:16px;line-height:1.45}
-        a{color:#55d48c}
-        .note{position:sticky;top:0;background:#161616;border-bottom:1px solid #333;padding:10px 12px;margin:-16px -16px 16px}
-      </style>
-    </head>
-    <body>
-      <div class="note">נטען מצב Snapshot (scraping) מתוך: <a href="${safeHtml(url)}" rel="noreferrer">${safeHtml(url)}</a></div>
-      <div>${escaped}</div>
-    </body>
-    </html>
-  `;
+  const url = await withContext(async (context) => {
+    async function tryProvider(providerFn) {
+      const page = await context.newPage();
+      try {
+        return await providerFn(page);
+      } catch {
+        return "";
+      } finally {
+        await page.close().catch(() => {});
+      }
+    }
+
+    let href = await tryProvider((page) => resolveFromGoogle(page, query));
+    if (!isAllowedResultUrl(href)) {
+      href = await tryProvider((page) => resolveFromBing(page, query));
+    }
+    if (!isAllowedResultUrl(href)) {
+      href = await tryProvider((page) => resolveFromDuckDuckGo(page, query));
+    }
+    if (!isAllowedResultUrl(href)) {
+      throw new Error("Could not resolve first result URL");
+    }
+    return href;
+  });
+
+  resolvedUrlCache.set(cacheKey, { url, ts: Date.now() });
+  return url;
 }
+
+async function fetchTargetHtml(targetUrl) {
+  return withContext(async (context) => {
+    const page = await context.newPage();
+    try {
+      await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.waitForTimeout(1200);
+      return await page.content();
+    } finally {
+      await page.close().catch(() => {});
+    }
+  });
+}
+
+function prettyErrorMessage(error) {
+  const msg = String(error && error.message ? error.message : error || "");
+  if (msg.includes("Executable doesn't exist")) {
+    return "Playwright browser missing. Run: npx playwright install chromium";
+  }
+  return msg || "Unknown error";
+}
+
+app.get("/api/health", (_, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ ok: true, engine: "playwright", ts: Date.now() });
+});
+
+app.get("/api/chords/resolve", async (req, res) => {
+  const query = String(req.query.query || "").trim();
+  if (!query) {
+    res.status(400).json({ error: "Missing query" });
+    return;
+  }
+
+  try {
+    const firstResultUrl = await resolveFirstResultUrl(query);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ query, firstResultUrl });
+  } catch (error) {
+    res.status(502).json({ query, error: prettyErrorMessage(error) });
+  }
+});
 
 app.get("/api/chords/embedded", async (req, res) => {
-  const rawQuery = String(req.query.query || "").trim();
-  if (!rawQuery) {
+  const query = String(req.query.query || "").trim();
+  if (!query) {
     res.status(400).type("text/html; charset=utf-8").send("<h1>Missing query</h1>");
     return;
   }
 
   try {
-    const candidates = await resolveCandidateUrls(rawQuery);
-    let selectedUrl = "";
-    let pageHtml = "";
-    let lastError = null;
-
-    for (const candidate of candidates.slice(0, 5)) {
-      try {
-        pageHtml = await fetchPageHtml(candidate);
-        selectedUrl = candidate;
-        break;
-      } catch (directError) {
-        try {
-          pageHtml = await fetchViaJinaAsHtml(candidate);
-          selectedUrl = candidate;
-          break;
-        } catch (jinaError) {
-          lastError = jinaError || directError;
-        }
-      }
-    }
-
-    if (!selectedUrl || !pageHtml) {
-      const err = lastError && lastError.message ? lastError.message : "Could not load any top result";
-      throw new Error(err);
-    }
-
-    const embedded = injectBaseAndBanner(pageHtml, selectedUrl);
+    const firstResultUrl = await resolveFirstResultUrl(query);
+    const html = await fetchTargetHtml(firstResultUrl);
+    const embedded = injectBaseAndBanner(html, firstResultUrl);
     res.setHeader("Cache-Control", "no-store");
     res.type("text/html; charset=utf-8").send(embedded);
   } catch (error) {
-    const message = safeHtml(error && error.message ? error.message : "Unknown error");
+    const message = safeHtml(prettyErrorMessage(error));
     res.status(502).type("text/html; charset=utf-8").send(`
       <!doctype html>
       <html lang="he" dir="rtl">
@@ -415,31 +330,6 @@ app.get("/api/chords/embedded", async (req, res) => {
   }
 });
 
-app.get("/api/chords/resolve", async (req, res) => {
-  const rawQuery = String(req.query.query || "").trim();
-  if (!rawQuery) {
-    res.status(400).json({ error: "Missing query" });
-    return;
-  }
-
-  try {
-    const candidates = await resolveCandidateUrls(rawQuery);
-    const firstResultUrl = candidates[0];
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ query: rawQuery, firstResultUrl, candidates: candidates.slice(0, 5) });
-  } catch (error) {
-    res.status(502).json({
-      query: rawQuery,
-      error: error && error.message ? error.message : "Unknown error",
-    });
-  }
-});
-
-app.get("/api/health", (_, res) => {
-  res.setHeader("Cache-Control", "no-store");
-  res.json({ ok: true, ts: Date.now() });
-});
-
 app.get("*", (_, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
@@ -447,3 +337,17 @@ app.get("*", (_, res) => {
 app.listen(PORT, () => {
   console.log(`Server ready on http://localhost:${PORT}`);
 });
+
+async function shutdown() {
+  try {
+    const browser = await browserPromise;
+    if (browser) await browser.close();
+  } catch {
+    // ignore
+  } finally {
+    process.exit(0);
+  }
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

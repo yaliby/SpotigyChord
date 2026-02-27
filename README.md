@@ -8,6 +8,7 @@
 ## איך מריצים מקומית
 1) התקנת תלויות:
    - `npm install`
+   - `npm run playwright:install`
 2) הרצת שרת:
    - `npm run dev`
 3) פתח בדפדפן:
@@ -17,6 +18,11 @@
    - תדביק Client ID (חד‑פעמי) ותשמור.
    - אם ה־frontend רץ ב־GitHub Pages: הדבק בשדה Backend API את כתובת השרת שלך (Render/Railway/VPS).
    - תלחץ "התחבר ל‑Spotify".
+
+## הרצה בקונטיינר (Playwright בתוך Docker)
+1) `docker compose up --build`
+2) פתח: `http://localhost:8080`
+3) אם ה־frontend נשאר ב־GitHub Pages, הדבק בשדה Backend API את כתובת הקונטיינר/שרת שלך.
 
 ## הערות
 - אם אין שיר שמתנגן כרגע/אין device פעיל — תראה "אין שיר כרגע".
