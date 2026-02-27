@@ -122,24 +122,21 @@ function setDebug(text) {
   els.debugLine.textContent = text || "";
 }
 
-function joinUrl(base, path) {
-  const cleanBase = String(base || "").replace(/\/+$/, "");
-  const cleanPath = String(path || "").startsWith("/") ? path : `/${path}`;
-  return `${cleanBase}${cleanPath}`;
-}
-
-function apiBaseUrl() {
-  const configured = getApiBase();
-  if (configured) return configured;
-  return baseDirUrl().replace(/\/+$/, "");
-}
-
 function apiUrl(path) {
-  return joinUrl(apiBaseUrl(), path);
+  const cleanPath = String(path || "").replace(/^\/+/, "");
+  const configured = getApiBase();
+
+  // If a backend URL was configured explicitly, always use it.
+  if (configured) {
+    return `${configured.replace(/\/+$/, "")}/${cleanPath}`;
+  }
+
+  // Default to project-relative API path (works for /repo-name/ on GitHub Pages).
+  return new URL(cleanPath, baseDirUrl()).toString();
 }
 
 function embeddedChordsUrl(query) {
-  return apiUrl(`/api/chords/embedded?query=${encodeURIComponent(query)}&t=${Date.now()}`);
+  return apiUrl(`api/chords/embedded?query=${encodeURIComponent(query)}&t=${Date.now()}`);
 }
 
 let frameFallbackTimer = null;
@@ -175,7 +172,7 @@ async function ensureBackendAvailable() {
     return backendHealthCache.ok;
   }
 
-  const healthUrl = apiUrl(`/api/health?t=${now}`);
+  const healthUrl = apiUrl(`api/health?t=${now}`);
   let ok = false;
   try {
     const ctl = new AbortController();
@@ -212,7 +209,7 @@ async function openChordsViewer(query) {
 
   const backendOk = await ensureBackendAvailable();
   if (!backendOk) {
-    showChordsInlineError("ה‑Backend לא זמין", `לא ניתן להגיע ל־${apiUrl("/api/health")}`);
+    showChordsInlineError("ה‑Backend לא זמין", `לא ניתן להגיע ל־${apiUrl("api/health")}`);
     return;
   }
 
