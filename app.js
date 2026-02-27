@@ -139,14 +139,45 @@ function embeddedChordsUrl(query) {
   return apiUrl(`api/chords/embedded?query=${encodeURIComponent(query)}&t=${Date.now()}`);
 }
 
-const RSS2JSON_ENDPOINT = "https://api.rss2json.com/v1/api.json";
+const SEARCH_PROXY_BASE = "https://api.allorigins.win";
 const BLOCKED_RESULT_HOSTS = [
   "youtube.com",
   "youtu.be",
   "facebook.com",
   "instagram.com",
   "tiktok.com",
+  "x.com",
+  "twitter.com",
   "ultimate-guitar.com",
+  "e-chords.com",
+  "khmerchords.com",
+  "songsterr.com",
+  "tabs.ultimate-guitar.com",
+];
+const SEARCH_ENGINE_HOSTS = [
+  "bing.com",
+  "google.com",
+  "duckduckgo.com",
+  "search.yahoo.com",
+  "yahoo.com",
+  "yandex.com",
+  "yandex.ru",
+];
+const FRAME_FRIENDLY_HOSTS = [
+  "guitaretab.com",
+  "chordsbase.com",
+  "guitartabsexplorer.com",
+  "ukulele-tabs.com",
+  "playukulele.net",
+  "cifraclub.com",
+];
+const CHORD_URL_HINTS = [
+  "chord",
+  "tab",
+  "guitar",
+  "ukulele",
+  "cifra",
+  "acord",
 ];
 
 let frameFallbackTimer = null;
@@ -163,42 +194,188 @@ function safeHost(url) {
 function shouldSkipResult(url) {
   const host = safeHost(url);
   if (!host) return true;
-  return BLOCKED_RESULT_HOSTS.some(h => host.includes(h));
+  if (SEARCH_ENGINE_HOSTS.some(h => host === h || host.endsWith(`.${h}`))) {
+    return true;
+  }
+  return BLOCKED_RESULT_HOSTS.some(h => host === h || host.endsWith(`.${h}`));
 }
 
-function jinaMirrorUrl(url) {
-  return `https://r.jina.ai/http://${String(url).replace(/^https?:\/\//, "")}`;
+function bingSearchUrl(query) {
+  return `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
 }
 
-async function fetchJsonWithTimeout(url, timeoutMs = 12000) {
+function searchProxyUrls(query) {
+  const searchTextUrl = `https://r.jina.ai/http://www.bing.com/search?q=${encodeURIComponent(query)}`;
+  const encodedTarget = encodeURIComponent(searchTextUrl);
+  return [
+    `${SEARCH_PROXY_BASE}/raw?url=${encodedTarget}`,
+    `${SEARCH_PROXY_BASE}/get?url=${encodedTarget}`,
+  ];
+}
+
+function decodeBase64UrlUtf8(value) {
+  const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  if (!normalized) return "";
+
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  try {
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return "";
+  }
+}
+
+function decodeBingTrackingUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    if (!url.hostname.includes("bing.com")) return rawUrl;
+    if (!url.pathname.startsWith("/ck/a")) return rawUrl;
+
+    const encoded = url.searchParams.get("u");
+    if (!encoded) return rawUrl;
+
+    const stripped = encoded.startsWith("a1") ? encoded.slice(2) : encoded;
+    const decoded = decodeBase64UrlUtf8(stripped);
+    if (/^https?:\/\//i.test(decoded)) return decoded;
+    return rawUrl;
+  } catch {
+    return rawUrl;
+  }
+}
+
+function normalizeUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    if (!/^https?:$/i.test(url.protocol)) return "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function extractCandidateLinksFromSearchText(text) {
+  const source = String(text || "");
+  const links = [];
+
+  // Prefer numbered SERP lines when they exist.
+  for (const match of source.matchAll(/^\s*\d+\.\s+\[[^\]]*]\((https?:\/\/[^\s)]+)\)/gim)) {
+    links.push(match[1]);
+  }
+
+  // Fallback to any markdown/html link pattern.
+  if (!links.length) {
+    for (const match of source.matchAll(/\((https?:\/\/[^\s)]+)\)/gim)) {
+      links.push(match[1]);
+    }
+    for (const match of source.matchAll(/href=["'](https?:\/\/[^"']+)["']/gim)) {
+      links.push(match[1]);
+    }
+  }
+
+  return links;
+}
+
+function hasChordHint(url) {
+  const lowered = String(url || "").toLowerCase();
+  return CHORD_URL_HINTS.some(h => lowered.includes(h));
+}
+
+function scoreResult(url, queryTokens) {
+  const host = safeHost(url);
+  if (!host) return -10000;
+  if (shouldSkipResult(url)) return -10000;
+
+  let score = 0;
+  const lowered = url.toLowerCase();
+  if (FRAME_FRIENDLY_HOSTS.some(h => host === h || host.endsWith(`.${h}`))) score += 120;
+  if (hasChordHint(url)) score += 35;
+
+  for (const token of queryTokens) {
+    if (lowered.includes(token)) score += 4;
+  }
+
+  return score;
+}
+
+function pickBestResult(query, candidates) {
+  const tokens = String(query || "")
+    .toLowerCase()
+    .split(/\s+/)
+    .map(token => token.replace(/[^a-z0-9א-ת]+/g, ""))
+    .filter(token => token.length >= 3)
+    .slice(0, 8);
+
+  const seen = new Set();
+  const ranked = [];
+
+  for (let i = 0; i < candidates.length; i++) {
+    const decoded = decodeBingTrackingUrl(candidates[i]);
+    const normalized = normalizeUrl(decoded);
+    if (!normalized) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+
+    const score = scoreResult(normalized, tokens);
+    if (score <= -1000) continue;
+    ranked.push({ url: normalized, score, index: i });
+  }
+
+  ranked.sort((a, b) => b.score - a.score || a.index - b.index);
+  return ranked[0]?.url || "";
+}
+
+async function fetchTextWithTimeout(url, timeoutMs = 12000) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), timeoutMs);
   try {
     const res = await fetch(url, { cache: "no-store", signal: ctl.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
+    return await res.text();
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function resolveFirstResultWithoutBackend(query) {
-  const bingRssUrl = `https://www.bing.com/search?format=rss&q=${encodeURIComponent(query)}`;
-  const endpoint = `${RSS2JSON_ENDPOINT}?rss_url=${encodeURIComponent(bingRssUrl)}`;
-  const payload = await fetchJsonWithTimeout(endpoint, 12000);
+function unwrapProxyPayload(rawPayload) {
+  const text = String(rawPayload || "").trim();
+  if (!text) return "";
+  if (!text.startsWith("{")) return text;
 
-  if (!payload || payload.status !== "ok") {
-    throw new Error(payload?.message || "Bing RSS failed");
+  try {
+    const parsed = JSON.parse(text);
+    if (typeof parsed?.contents === "string") return parsed.contents;
+  } catch {
+    // ignore and fallback to the original text
+  }
+  return text;
+}
+
+async function resolveFirstResultWithoutBackend(query) {
+  const searchQuery = `${query} guitar chords`;
+  const proxyUrls = searchProxyUrls(searchQuery);
+  let lastError = null;
+
+  for (const proxyUrl of proxyUrls) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const payload = await fetchTextWithTimeout(proxyUrl, 12000);
+        const text = unwrapProxyPayload(payload);
+        const links = extractCandidateLinksFromSearchText(text);
+        const best = pickBestResult(searchQuery, links);
+        if (best) return { mode: "direct", url: best };
+      } catch (error) {
+        lastError = error;
+      }
+    }
   }
 
-  const links = (payload.items || [])
-    .map(item => String(item?.link || "").trim())
-    .filter(Boolean);
-
-  if (!links.length) throw new Error("No results from search feed");
-
-  const preferred = links.find(link => !shouldSkipResult(link));
-  return preferred || links[0];
+  if (lastError) {
+    throw lastError;
+  }
+  throw new Error("No suitable result found");
 }
 
 function frameErrorHtml(title, details) {
@@ -285,19 +462,25 @@ async function openChordsViewer(query) {
 
   if (!configuredBackend || !els.chordsFrame.src) {
     try {
-      const firstUrl = await resolveFirstResultWithoutBackend(query);
-      els.chordsFrame.src = jinaMirrorUrl(firstUrl);
-      if (els.chordsHint) els.chordsHint.textContent = `נטען מראה פנימית של: ${safeHost(firstUrl)}`;
+      const resolved = await resolveFirstResultWithoutBackend(query);
+      els.chordsFrame.src = resolved.url;
+      if (els.chordsHint) {
+        els.chordsHint.textContent = `טוען אתר אקורדים: ${safeHost(resolved.url)}`;
+      }
     } catch (error) {
-      showChordsInlineError("לא הצלחתי לפתוח תוצאת אקורדים", error?.message || String(error));
-      return;
+      const fallbackUrl = bingSearchUrl(`${query} guitar chords`);
+      els.chordsFrame.src = fallbackUrl;
+      if (els.chordsHint) {
+        els.chordsHint.textContent = "החיפוש האוטומטי נכשל, נטענו תוצאות חיפוש בתוך האפליקציה.";
+      }
+      setDebug(`Search fallback: ${error?.message || String(error)}`);
     }
   }
 
   clearTimeout(frameFallbackTimer);
   frameFallbackTimer = setTimeout(() => {
     if (els.chordsHint) {
-      els.chordsHint.textContent = "אם הטעינה איטית זה תקין. אפשר גם להגדיר Backend לשיפור יציבות.";
+      els.chordsHint.textContent = "אם האתר לא מוצג טוב, נסה שוב או הגדר Backend ליציבות גבוהה יותר.";
     }
   }, 3500);
 }
@@ -438,7 +621,7 @@ function updateTrackUI(data) {
   const playing = !!data.is_playing;
   setStatus(playing ? "מתנגן עכשיו ✅" : "מושהה ⏸");
 
-  const query = `${artists} ${title} chords`;
+  const query = `${artists} ${title}`;
   els.chordsGoogle.href = "#";
   els.chordsGoogle.dataset.query = query;
   els.spotifyOpen.href = spotifyUrl || "#";
@@ -549,8 +732,13 @@ els.chordsGoogle?.addEventListener("click", (event) => {
 });
 
 els.chordsFrame?.addEventListener("load", () => {
+  const host = safeHost(els.chordsFrame?.src || "");
   if (els.chordsHint) {
-    els.chordsHint.textContent = "האתר נטען בתוך האפליקציה.";
+    if (host.includes("bing.com")) {
+      els.chordsHint.textContent = "נטענו תוצאות החיפוש בתוך האפליקציה.";
+    } else {
+      els.chordsHint.textContent = "האתר נטען בתוך האפליקציה.";
+    }
   }
 });
 
